@@ -31,9 +31,24 @@ async function saveEvent(workflowId, eventType, payload = {}) {
     `INSERT INTO workflow_events (workflow_id, event_type, payload)
      VALUES ($1, $2, $3)`,
     [workflowId, eventType, JSON.stringify(payload)]
+    
   );
 }
 
+async function queueWorkflowEvent(workflowId, eventType, payload = {}) {
+  const event = {
+    eventId: randomUUID(),
+    workflowId,
+    eventType,
+    payload,
+    timestamp: new Date().toISOString(),
+  };
+
+  await saveOutboxEvent(event);
+}
+
+
+async function saveOutboxEvent(event) { await pool.query( `INSERT INTO outbox_events (event_id, topic, payload) VALUES ($1, $2, $3) ON CONFLICT (event_id) DO NOTHING`, [ event.eventId, "workflow-events", JSON.stringify(event), ] ); }
 async function updateStatus(workflowId, status) {
   await pool.query(
     "UPDATE workflows SET status = $1 WHERE id = $2",
@@ -42,6 +57,7 @@ async function updateStatus(workflowId, status) {
 
   console.log(`Workflow ${workflowId} -> ${status}`);
 }
+
 
 app.get("/health", async (req, res) => {
   try {
@@ -59,8 +75,8 @@ app.get("/health", async (req, res) => {
   }
 });
 
+
 app.post("/workflows", async (req, res) => {
-  const workflowId = randomUUID();
   const { customerName, loanAmount } = req.body;
   const amount = Number(loanAmount);
 
@@ -75,43 +91,105 @@ app.post("/workflows", async (req, res) => {
     });
   }
 
+  const workflowId = randomUUID();
+
   const input = {
     customerName: customerName.trim(),
     loanAmount: amount,
   };
 
+  const event = {
+    eventId: randomUUID(),
+    workflowId,
+    eventType: "WORKFLOW_CREATED",
+    payload: input,
+    timestamp: new Date().toISOString(),
+  };
+
+  const client = await pool.connect();
+
   try {
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    const result = await client.query(
       `INSERT INTO workflows (id, status, input)
        VALUES ($1, 'PENDING', $2)
        RETURNING id, status, input, created_at`,
       [workflowId, JSON.stringify(input)]
     );
 
-    await saveEvent(workflowId, "WORKFLOW_CREATED", input);
+    await client.query(
+      `INSERT INTO workflow_events
+       (workflow_id, event_type, payload)
+       VALUES ($1, $2, $3)`,
+      [
+        workflowId,
+        "WORKFLOW_CREATED",
+        JSON.stringify(input),
+      ]
+    );
 
-    await publishEvent("workflow-events", {
-      eventId: randomUUID(),
-      workflowId,
-      eventType: "WORKFLOW_CREATED",
-      payload: input,
-      timestamp: new Date().toISOString(),
-    });
+    await client.query(
+      `INSERT INTO outbox_events (event_id, topic, payload)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (event_id) DO NOTHING`,
+      [
+        event.eventId,
+        "workflow-events",
+        JSON.stringify(event),
+      ]
+    );
+
+    await client.query("COMMIT");
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error("Workflow creation failed:", error.message);
-
-    await pool.query(
-      "UPDATE workflows SET status = 'FAILED' WHERE id = $1",
-      [workflowId]
-    ).catch(() => {});
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("Workflow creation failed:", error);
 
     res.status(500).json({
       error: "Could not create workflow",
     });
+  } finally {
+    client.release();
   }
 });
+
+async function publishPendingOutboxEvents() {
+  const result = await pool.query(
+    `SELECT id, event_id, topic, payload
+     FROM outbox_events
+     WHERE published_at IS NULL
+     ORDER BY created_at
+     LIMIT 50`
+  );
+
+  for (const row of result.rows) {
+    try {
+      await publishEvent(row.topic, row.payload);
+
+      await pool.query(
+        `UPDATE outbox_events
+         SET published_at = NOW(),
+             attempts = attempts + 1
+         WHERE id = $1`,
+        [row.id]
+      );
+    } catch (error) {
+      await pool.query(
+        `UPDATE outbox_events
+         SET attempts = attempts + 1
+         WHERE id = $1`,
+        [row.id]
+      ).catch(() => {});
+
+      console.error(
+        `Outbox event ${row.event_id} publish failed:`,
+        error.message
+      );
+    }
+  }
+}
 
 app.get("/workflows/:id", async (req, res) => {
   try {
@@ -151,14 +229,7 @@ async function handleEvent(event) {
 
     await updateStatus(workflowId, "VERIFYING");
 
-    await publishEvent("workflow-events", {
-      eventId: randomUUID(),
-      workflowId,
-      eventType: "START_VERIFICATION",
-      payload: input,
-      timestamp: new Date().toISOString(),
-    });
-
+  await queueWorkflowEvent(workflowId, "START_VERIFICATION", input);
     return;
   }
 
@@ -196,13 +267,7 @@ async function handleEvent(event) {
     await saveEvent(workflowId, eventType, payload);
     await updateStatus(workflowId, "COMPENSATING");
 
-    await publishEvent("workflow-events", {
-      eventId: randomUUID(),
-      workflowId,
-      eventType: "COMPENSATE_VERIFICATION",
-      payload: input,
-      timestamp: new Date().toISOString(),
-    });
+  await queueWorkflowEvent(workflowId, "START_CREDIT_CHECK", input);
 
     return;
   }
@@ -303,8 +368,31 @@ async function start() {
     )
   `);
 
+    await pool.query(`
+    CREATE TABLE IF NOT EXISTS outbox_events (
+      id BIGSERIAL PRIMARY KEY,
+      event_id UUID NOT NULL UNIQUE,
+      topic VARCHAR(255) NOT NULL,
+      payload JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      published_at TIMESTAMPTZ,
+      attempts INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_outbox_pending
+    ON outbox_events (created_at)
+    WHERE published_at IS NULL
+  `);
+
   await producer.connect();
   await consumer.connect();
+  setInterval(() => {
+  publishPendingOutboxEvents().catch(error => {
+    console.error("Outbox publisher error:", error.message);
+  });
+}, 1000);
 
   await consumer.subscribe({
     topic: "workflow-events",
