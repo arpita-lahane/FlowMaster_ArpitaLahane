@@ -1,0 +1,17 @@
+
+name: loan-approval-saga
+
+steps:
+  - name: verification
+    service: verification-service
+    action: start_verification
+    compensation: compensate_verification
+
+  - name: credit-check
+    service: credit-service
+    action: start_credit_check
+    compensation: none
+
+settings:
+  retryAttempts: 3
+  failureStrategy: compensate
