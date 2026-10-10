@@ -224,15 +224,16 @@ async function handleEvent(event) {
   const workflow = workflowResult.rows[0];
   const input = workflow.input;
 
+  
   if (eventType === "WORKFLOW_CREATED") {
     if (workflow.status !== "PENDING") return;
 
     await updateStatus(workflowId, "VERIFYING");
 
-  await queueWorkflowEvent(workflowId, "START_VERIFICATION", input);
+    await queueWorkflowEvent(workflowId, "START_VERIFICATION", input);
+
     return;
   }
-
   if (eventType === "CUSTOMER_VERIFIED") {
     if (workflow.status !== "VERIFYING") return;
 
