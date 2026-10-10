@@ -2,9 +2,12 @@
   "name": "flowmaster_arpitalahane",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+ "scripts": {
+  "start:orchestrator": "node orchestrator/index.js",
+  "start:verification": "node verification-service/index.js",
+  "start:credit": "node credit-service/index.js",
+  "test": "node --check orchestrator/index.js && node --check verification-service/index.js && node --check credit-service/index.js"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
