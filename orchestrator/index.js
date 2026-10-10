@@ -268,8 +268,7 @@ async function handleEvent(event) {
     await saveEvent(workflowId, eventType, payload);
     await updateStatus(workflowId, "COMPENSATING");
 
-  await queueWorkflowEvent(workflowId, "START_CREDIT_CHECK", input);
-
+      await queueWorkflowEvent(workflowId, "COMPENSATE_VERIFICATION", payload);
     return;
   }
 
