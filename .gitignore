@@ -1,3 +1,9 @@
 node_modules/
 .env
 *.log
+
+# Backup files
+backup-before-kafka/
+*-before-consumer.js
+*-before-event-flow.js
+*.backup.js
