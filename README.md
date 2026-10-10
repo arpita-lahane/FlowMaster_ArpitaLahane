@@ -79,16 +79,86 @@ The project includes workflow status checks, Kafka event-based service communica
 
 ## Running Locally
 
-1. Start the PostgreSQL and Kafka Docker containers.
-2. Configure the environment variables in `.env`.
-3. Install dependencies using `npm install`.
-4. Start the Verification Service, Credit Service, and Orchestrator in separate terminals.
-5. Create a workflow using the API and retrieve its status.
+## Running Locally
 
-## Scope and Limitations
+### Prerequisites
 
-Advanced features such as a transactional outbox, production-grade retry handling, circuit breakers, Redis caching, Prometheus metrics, distributed tracing, and AWS Lambda integration should be considered complete only after implementation and verification.
+* Node.js and npm
+* Docker Desktop
+* PostgreSQL and Kafka configured through Docker Compose
 
-## Conclusion
+### Setup
 
-FlowMaster demonstrates event-driven microservice orchestration using Kafka, persistent workflow state in PostgreSQL, Saga-style compensation, and basic restart recovery.
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/arpita-lahane/FlowMaster_ArpitaLahane.git
+   cd FlowMaster_ArpitaLahane
+   ```
+
+2. Start the infrastructure:
+
+   ```bash
+   docker compose up -d
+   ```
+
+3. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+4. Configure the required environment variables in your local `.env` file. Do not commit secrets to GitHub.
+
+### Start the Services
+
+Open three separate terminals in the project root.
+
+Terminal 1 — Verification Service:
+
+```bash
+npm run start:verification
+```
+
+Terminal 2 — Credit Service:
+
+```bash
+npm run start:credit
+```
+
+Terminal 3 — Orchestrator:
+
+```bash
+npm run start:orchestrator
+```
+
+### API Usage
+
+Create a workflow:
+
+`POST http://localhost:3000/workflows`
+
+Example JSON request:
+
+```json
+{
+  "customerName": "Arpita Test",
+  "loanAmount": 60000
+}
+```
+
+Retrieve workflow status:
+
+`GET http://localhost:3000/workflows/{id}`
+
+Replace `{id}` with the workflow ID returned by the create-workflow API.
+
+### Syntax Check
+
+Run the JavaScript syntax checks:
+
+```bash
+npm test
+```
+
+This command checks JavaScript syntax; it does not run automated integration tests.
